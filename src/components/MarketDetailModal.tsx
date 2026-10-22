@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Market, Outcome } from '../types/market';
-import { useMarket } from '../context/MarketContext';
+import { useMarket, calculateEstimatedPayout } from '../context/MarketContext';
 import { 
   X, 
   Clock, 
@@ -74,8 +74,9 @@ export const MarketDetailModal: React.FC<MarketDetailModalProps> = ({
   };
 
   const stakeNum = Number(stakeAmount) || 0;
-  const potentialPayout = Math.floor(stakeNum * 1.1);
-  const potentialProfit = potentialPayout - stakeNum;
+  const estimate = calculateEstimatedPayout(stakeNum, selectedSide, yesPool, noPool);
+  const potentialPayout = estimate.totalReturn;
+  const potentialProfit = estimate.profit;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-150">
@@ -299,12 +300,19 @@ export const MarketDetailModal: React.FC<MarketDetailModalProps> = ({
 
                   <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 text-xs font-mono space-y-1">
                     <div className="flex justify-between text-slate-400">
-                      <span>Potential Payout (10% Bonus):</span>
+                      <span>Trading Fee (2%):</span>
+                      <span className="text-slate-300 font-bold">{estimate.fee} cr</span>
+                    </div>
+                    <div className="flex justify-between text-slate-400">
+                      <span>Potential Payout:</span>
                       <span className="text-emerald-400 font-bold">{potentialPayout} cr</span>
                     </div>
                     <div className="flex justify-between text-slate-400 text-[11px]">
                       <span>Potential Profit:</span>
-                      <span className="text-emerald-400">+{potentialProfit} cr</span>
+                      <span className="text-emerald-400 font-bold">+{potentialProfit} cr</span>
+                    </div>
+                    <div className="text-[10px] text-slate-500 pt-1 border-t border-slate-800">
+                      Market spread applied (50/50 pays 49 on 50)
                     </div>
                   </div>
                 </div>

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { MarketProvider, useMarket, ADMIN_CODE } from './context/MarketContext';
+import { MarketProvider, useMarket } from './context/MarketContext';
 import { Header } from './components/Header';
 import { MarketCard } from './components/MarketCard';
 import { MarketDetailModal } from './components/MarketDetailModal';
@@ -405,7 +405,7 @@ const MainApp: React.FC = () => {
               className="hover:text-slate-300 transition-colors flex items-center gap-1 font-mono"
             >
               <Lock className="w-3 h-3" />
-              Admin Portal ({ADMIN_CODE})
+              Admin Portal
             </button>
             <span>·</span>
             <button

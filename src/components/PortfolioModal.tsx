@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useMarket } from '../context/MarketContext';
+import { useMarket, calculateEstimatedPayout } from '../context/MarketContext';
 import { Market } from '../types/market';
 import { 
   X, 
@@ -43,10 +43,20 @@ export const PortfolioModal: React.FC<PortfolioModalProps> = ({
   const resolvedPositions = userPositions.filter(p => p.market.status === 'resolved');
 
   const totalOpenStake = openPositions.reduce((sum, p) => sum + p.position.stake, 0);
-  const totalPotentialPayout = openPositions.reduce((sum, p) => sum + Math.floor(p.position.stake * 1.1), 0);
+  const totalPotentialPayout = openPositions.reduce((sum, p) => {
+    const pList = Object.values(p.market.positions || {});
+    const yesP = pList.filter(x => x.side === 'YES').reduce((s, x) => s + x.stake, 0);
+    const noP = pList.filter(x => x.side === 'NO').reduce((s, x) => s + x.stake, 0);
+    return sum + calculateEstimatedPayout(p.position.stake, p.position.side, yesP, noP).totalReturn;
+  }, 0);
   
   const wonPositions = resolvedPositions.filter(p => p.position.side === p.market.outcome);
-  const totalCreditsWon = wonPositions.reduce((sum, p) => sum + Math.floor(p.position.stake * 1.1), 0);
+  const totalCreditsWon = wonPositions.reduce((sum, p) => {
+    const pList = Object.values(p.market.positions || {});
+    const yesP = pList.filter(x => x.side === 'YES').reduce((s, x) => s + x.stake, 0);
+    const noP = pList.filter(x => x.side === 'NO').reduce((s, x) => s + x.stake, 0);
+    return sum + calculateEstimatedPayout(p.position.stake, p.position.side, yesP, noP).totalReturn;
+  }, 0);
 
   const displayedPositions = userPositions.filter(p => {
     if (filter === 'open') return p.market.status === 'open';
@@ -108,7 +118,7 @@ export const PortfolioModal: React.FC<PortfolioModalProps> = ({
               <span className="text-lg font-bold text-emerald-400">
                 {totalPotentialPayout.toLocaleString()}
               </span>
-              <span className="text-[10px] font-sans text-slate-500 block mt-0.5">With 10% bonus</span>
+              <span className="text-[10px] font-sans text-slate-500 block mt-0.5">Estimated net return (after 2% fee)</span>
             </div>
 
             <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800">
@@ -156,7 +166,7 @@ export const PortfolioModal: React.FC<PortfolioModalProps> = ({
             </div>
 
             <span className="text-xs text-slate-500">
-              Rule: Winning bets return stake + 10% bonus
+              Rule: 2% protocol fee applied (50/50 odds pays 49 on 50)
             </span>
           </div>
 
@@ -173,7 +183,10 @@ export const PortfolioModal: React.FC<PortfolioModalProps> = ({
               {displayedPositions.map(({ market, position }) => {
                 const isWon = market.status === 'resolved' && market.outcome === position.side;
                 const isLost = market.status === 'resolved' && market.outcome !== null && market.outcome !== position.side;
-                const potential = Math.floor(position.stake * 1.1);
+                const pList = Object.values(market.positions || {});
+                const yesP = pList.filter(x => x.side === 'YES').reduce((s, x) => s + x.stake, 0);
+                const noP = pList.filter(x => x.side === 'NO').reduce((s, x) => s + x.stake, 0);
+                const potential = calculateEstimatedPayout(position.stake, position.side, yesP, noP).totalReturn;
 
                 return (
                   <div

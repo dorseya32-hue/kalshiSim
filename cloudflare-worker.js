@@ -55,7 +55,7 @@ export default {
         </div>
 
         <button id="btn-admin-toggle" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-lg border border-slate-700 transition">
-          Admin (123457)
+          Admin
         </button>
 
         <button id="btn-auth-toggle" class="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-lg transition shadow-sm">
@@ -79,7 +79,7 @@ export default {
           Trade outcome contracts with play credits.
         </h1>
         <p class="text-xs sm:text-sm text-slate-400 leading-relaxed">
-          Credits hold no monetary cash value. Back your conviction on YES or NO. Winning bets receive your original stake back plus a <strong>10% bonus payout</strong>.
+          Credits hold no monetary cash value. Back your conviction on YES or NO. Includes a standard 2% trading fee spread (50/50 pays 49/49).
         </p>
       </div>
 
@@ -89,12 +89,12 @@ export default {
           <strong class="text-emerald-400 font-bold">1,000 credits</strong>
         </div>
         <div class="flex justify-between gap-4 text-slate-400">
-          <span>Resolution Bonus:</span>
-          <strong class="text-slate-200">+10% Payout</strong>
+          <span>Trading Fee:</span>
+          <strong class="text-slate-200">2% (50/50 pays 49/49)</strong>
         </div>
         <div class="flex justify-between gap-4 text-slate-400">
-          <span>Admin Passcode:</span>
-          <strong class="text-slate-200 font-bold">123457</strong>
+          <span>Platform Status:</span>
+          <strong class="text-emerald-400 font-bold">Online</strong>
         </div>
       </div>
     </section>
@@ -123,7 +123,7 @@ export default {
       </div>
     </section>
 
-    <!-- Admin Console (Password-Gated with 123457) -->
+    <!-- Admin Console (Password-Gated) -->
     <section id="admin" class="hidden p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-6 shadow-2xl">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
         <div class="flex items-center gap-2">
@@ -254,9 +254,41 @@ export default {
       console.warn("Firebase Init Error:", e);
     }
 
-    const ADMIN_CODE = "123457";
+    // Admin authority passcode SHA-256 hash (passcode is concealed and never exposed in client script)
+    const ADMIN_CODE_HASH = "54b688a517f7654563a6c64d945a3670880a4c602ec67a065bbebbcd2b22edd5";
     const STARTING_CREDITS = 1000;
+    const PLATFORM_FEE_RATE = 0.02; // 2% trading fee spread (50/50 odds pays 49 on 50)
     const $ = id => document.getElementById(id);
+
+    async function verifyPasscode(input) {
+      if (!input) return false;
+      try {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(input.trim());
+        const hashBuf = await crypto.subtle.digest("SHA-256", data);
+        const hashArr = Array.from(new Uint8Array(hashBuf));
+        const hashHex = hashArr.map(b => b.toString(16).padStart(2, "0")).join("");
+        return hashHex === ADMIN_CODE_HASH;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function calculateEstimatedPayout(stake, side, yesPool, noPool) {
+      const grossStake = Math.floor(Number(stake) || 0);
+      if (grossStake <= 0) return { grossStake: 0, fee: 0, netStake: 0, profit: 0, totalReturn: 0 };
+      const fee = Math.max(grossStake >= 10 ? 1 : 0, Math.floor(grossStake * PLATFORM_FEE_RATE));
+      const netStake = grossStake - fee;
+      const vSeed = 50;
+      const currentSidePool = side === 'YES' ? yesPool : noPool;
+      const opposingSidePool = side === 'YES' ? noPool : yesPool;
+      const sidePoolWithStake = currentSidePool + vSeed + netStake;
+      const opposingPool = opposingSidePool + vSeed;
+      const prob = sidePoolWithStake / (sidePoolWithStake + opposingPool);
+      const netMultiplier = (1 - PLATFORM_FEE_RATE) * ((1 - prob) / prob);
+      const profit = Math.max(1, Math.round(grossStake * netMultiplier));
+      return { grossStake, fee, netStake, profit, totalReturn: grossStake + profit };
+    }
 
     function say(message, isError = false) {
       const el = $("message");
@@ -321,19 +353,23 @@ export default {
       }
     }
 
-    function showAdminControls() {
+    async function showAdminControls() {
       if (!currentUser()) return say("Please log in first to access admin controls.", true);
-      const code = prompt("Enter the admin password (default: 123457):");
-      if (code !== ADMIN_CODE) return say("Incorrect admin password.", true);
+      const code = prompt("Enter the admin passcode:");
+      if (!code) return;
+      const valid = await verifyPasscode(code);
+      if (!valid) return say("Incorrect admin password.", true);
 
       $("admin").classList.toggle("hidden");
       say("Admin controls unlocked.");
     }
 
     async function createMarket() {
-      const code = prompt("Enter the admin passcode (123457) to create a market:");
-      if (code !== ADMIN_CODE) {
-        return say("Incorrect admin code. Passcode (123457) is required to create a market.", true);
+      const code = prompt("Enter the admin passcode to create a market:");
+      if (!code) return;
+      const valid = await verifyPasscode(code);
+      if (!valid) {
+        return say("Incorrect admin code. Admin passcode is required to create a market.", true);
       }
 
       const user = currentUser();
@@ -407,21 +443,26 @@ export default {
 
         const positionRef = marketRef.child("positions/" + user.uid);
         const positionSnapshot = await positionRef.once("value");
-        const position = positionSnapshot.val() || { side, stake: 0 };
+        const position = positionSnapshot.val() || { side, stake: 0, grossStake: 0, feePaid: 0 };
 
         if (position.side !== side && Number(position.stake) > 0) {
           return say("You already hold a " + position.side + " position. Only one side per market is permitted.", true);
         }
 
+        const fee = Math.max(amount >= 10 ? 1 : 0, Math.floor(amount * PLATFORM_FEE_RATE));
+        const netStake = amount - fee;
+
         await positionRef.set({
           username: userData.username || user.email.split('@')[0],
           side,
-          stake: Number(position.stake || 0) + amount,
+          stake: Number(position.stake || 0) + netStake,
+          grossStake: Number(position.grossStake || position.stake || 0) + amount,
+          feePaid: Number(position.feePaid || 0) + fee,
           timestamp: new Date().toISOString()
         });
         await userRef.update({ balance: Number(userData.balance || 0) - amount });
 
-        say("Bet placed: " + amount + " credits on " + side + "!");
+        say("Bet placed: " + amount + " credits on " + side + " (Fee: " + fee + " cr, Net stake: " + netStake + " cr)!");
         if (typeof confetti === 'function') confetti({ particleCount: 60, spread: 60 });
       } catch (error) {
         say("Could not place bet: " + error.message, true);
@@ -496,21 +537,33 @@ export default {
         let totalPayout = 0;
         let winnersCount = 0;
 
-        for (const [uid, position] of Object.entries(positions)) {
-          if (position.side === outcome) {
-            winnersCount++;
-            const stake = Number(position.stake || 0);
-            const payout = Math.floor(stake * 1.1); // 10% bonus returned
-            totalPayout += payout;
-            payoutPromises.push(
-              db.ref("users/" + uid).update({
-                balance: firebase.database.ServerValue.increment(payout)
-              })
-            );
-          }
+        const winningPositions = Object.entries(positions).filter(([_, p]) => p.side === outcome);
+        const losingPositions = Object.entries(positions).filter(([_, p]) => p.side !== outcome);
+
+        const winningPool = winningPositions.reduce((sum, [_, p]) => sum + Number(p.stake || 0), 0);
+        const losingPool = losingPositions.reduce((sum, [_, p]) => sum + Number(p.stake || 0), 0);
+
+        // Platform fee spread (2% fee on opposing pool, so 50/50 pays 49 on 50)
+        const protocolFeeFromLosingPool = Math.floor(losingPool * PLATFORM_FEE_RATE);
+        const netProfitPool = losingPool - protocolFeeFromLosingPool;
+
+        for (const [uid, position] of winningPositions) {
+          winnersCount++;
+          const stake = Number(position.stake || 0);
+          const userProfit = (winningPool > 0 && losingPool > 0)
+            ? Math.floor((stake / winningPool) * netProfitPool)
+            : Math.max(1, Math.floor(stake * (1 - PLATFORM_FEE_RATE)));
+          const payout = stake + userProfit;
+          totalPayout += payout;
+
+          payoutPromises.push(
+            db.ref("users/" + uid).update({
+              balance: firebase.database.ServerValue.increment(payout)
+            })
+          );
         }
         await Promise.all(payoutPromises);
-        say("Outcome set to " + outcome + "! Distributed " + totalPayout + " credits to " + winnersCount + " winners (+10% bonus).");
+        say("Outcome set to " + outcome + "! Distributed " + totalPayout + " credits to " + winnersCount + " winners (2% fee spread applied).");
         if (typeof confetti === 'function') confetti({ particleCount: 100, spread: 70 });
       } catch (error) {
         say("Could not set outcome: " + error.message, true);
@@ -615,7 +668,7 @@ export default {
             <div class="p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-xs flex justify-between items-center font-mono">
               <span class="text-slate-400">Your Position:</span>
               <span class="\${userPos.side === 'YES' ? 'text-emerald-400' : 'text-rose-400'} font-bold">
-                \${userPos.stake} cr on \${userPos.side} (Est. payout: \${Math.floor(userPos.stake * 1.1)} cr)
+                \${userPos.stake} cr on \${userPos.side} (Est. win return: \${calculateEstimatedPayout(userPos.grossStake || userPos.stake, userPos.side, yesPool, noPool).totalReturn} cr)
               </span>
             </div>
           \` : ''}
@@ -627,7 +680,7 @@ export default {
                 market.outcome === 'YES' ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30' : 'bg-rose-500/10 text-rose-300 border border-rose-500/30'
               }">
                 <span>OUTCOME: \${market.outcome}</span>
-                <span>\${userPos && userPos.side === market.outcome ? 'WON (+10% Bonus)' : 'RESOLVED'}</span>
+                <span>\${userPos && userPos.side === market.outcome ? 'WON (2% Spread Applied)' : 'RESOLVED'}</span>
               </div>
             \` : !isClosed ? \`
               <div class="space-y-2">
@@ -635,6 +688,9 @@ export default {
                   <input id="stake-\${marketId}" type="number" min="1" step="1" value="50" placeholder="Stake" class="w-24 px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono tabular-nums text-slate-100 text-center">
                   <button onclick="placeBet('\${marketId}', 'YES', document.getElementById('stake-\${marketId}').value)" class="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition">Bet YES</button>
                   <button onclick="placeBet('\${marketId}', 'NO', document.getElementById('stake-\${marketId}').value)" class="flex-1 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition">Bet NO</button>
+                </div>
+                <div class="text-[10px] text-slate-400 text-center font-mono">
+                  2% trading fee applied · 50/50 odds pays 49 net profit on 50 stake
                 </div>
               </div>
             \` : \`
@@ -654,10 +710,15 @@ export default {
       } else {
         let totalStaked = 0;
         for (const item of userBetsList) {
-          totalStaked += Number(item.position.stake || 0);
+          totalStaked += Number(item.position.grossStake || item.position.stake || 0);
           const isWon = item.market.status === 'resolved' && item.market.outcome === item.position.side;
           const isLost = item.market.status === 'resolved' && item.market.outcome && item.market.outcome !== item.position.side;
-          const potential = Math.floor(item.position.stake * 1.1);
+          
+          const pPositions = Object.values(item.market.positions || {});
+          const pYesPool = pPositions.filter(p => p.side === "YES").reduce((sum, p) => sum + Number(p.stake || 0), 0);
+          const pNoPool = pPositions.filter(p => p.side === "NO").reduce((sum, p) => sum + Number(p.stake || 0), 0);
+          const estimate = calculateEstimatedPayout(item.position.grossStake || item.position.stake, item.position.side, pYesPool, pNoPool);
+          const potential = estimate.totalReturn;
 
           const row = document.createElement("div");
           row.className = "p-3.5 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between text-xs";
@@ -671,7 +732,7 @@ export default {
                 \${item.position.stake} cr on \${item.position.side}
               </div>
               <div class="text-[11px] \${isWon ? 'text-emerald-400 font-bold' : isLost ? 'text-slate-500' : 'text-slate-400'}">
-                \${isWon ? '+ ' + potential + ' cr (WON)' : isLost ? '0 cr (LOST)' : 'Est. payout: ' + potential + ' cr'}
+                \${isWon ? 'WON (Paid out)' : isLost ? '0 cr (LOST)' : 'Est. return: ' + potential + ' cr'}
               </div>
             </div>
           \`;

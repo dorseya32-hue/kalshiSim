@@ -18,8 +18,83 @@ import {
 } from '../lib/firebase';
 
 const STORAGE_KEY = 'play_market_state_v1';
-export const ADMIN_CODE = '123457';
+// Admin authority passcode SHA-256 hash (never expose raw passcode in client bundles or UI)
+export const ADMIN_CODE_HASH = '54b688a517f7654563a6c64d945a3670880a4c602ec67a065bbebbcd2b22edd5';
 export const STARTING_CREDITS = 1000;
+export const PLATFORM_FEE_RATE = 0.02; // 2% trading fee (so 50/50 pays 49/49)
+
+export async function hashPasscode(code: string): Promise<string> {
+  const normalized = (code || '').trim();
+  if (!normalized) return '';
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(normalized);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  return '';
+}
+
+export async function verifyAdminPasscode(enteredCode: string): Promise<boolean> {
+  if (!enteredCode) return false;
+  try {
+    const hash = await hashPasscode(enteredCode);
+    return hash === ADMIN_CODE_HASH;
+  } catch {
+    return false;
+  }
+}
+
+export interface PayoutEstimate {
+  grossStake: number;
+  fee: number;
+  netStake: number;
+  profit: number;
+  totalReturn: number;
+  multiplier: number;
+}
+
+export function calculateEstimatedPayout(
+  stake: number,
+  side: Outcome,
+  yesPool: number,
+  noPool: number
+): PayoutEstimate {
+  const grossStake = Math.floor(Number(stake) || 0);
+  if (grossStake <= 0) {
+    return { grossStake: 0, fee: 0, netStake: 0, profit: 0, totalReturn: 0, multiplier: 0 };
+  }
+
+  // 2% fee on each bet (minimum 1 credit for stakes >= 10)
+  const fee = Math.max(grossStake >= 10 ? 1 : 0, Math.floor(grossStake * PLATFORM_FEE_RATE));
+  const netStake = grossStake - fee;
+
+  // Use a balanced virtual seed to ensure stable pricing on newly created markets
+  const vSeed = 50;
+  const currentSidePool = side === 'YES' ? yesPool : noPool;
+  const opposingSidePool = side === 'YES' ? noPool : yesPool;
+
+  const sidePoolWithStake = currentSidePool + vSeed + netStake;
+  const opposingPool = opposingSidePool + vSeed;
+
+  // Implied probability with stake included
+  const prob = sidePoolWithStake / (sidePoolWithStake + opposingPool);
+
+  // In 50/50: prob = 0.5 -> netMultiplier = 0.98 * 1.0 = 0.98. Staking 50 pays 49 profit (49/49).
+  const netMultiplier = (1 - PLATFORM_FEE_RATE) * ((1 - prob) / prob);
+  const profit = Math.max(1, Math.round(grossStake * netMultiplier));
+  const totalReturn = grossStake + profit;
+
+  return {
+    grossStake,
+    fee,
+    netStake,
+    profit,
+    totalReturn,
+    multiplier: parseFloat(netMultiplier.toFixed(3))
+  };
+}
 
 interface ToastMessage {
   id: string;
@@ -43,7 +118,7 @@ interface MarketContextType {
   logout: () => void;
   switchUser: (uid: string) => void;
   // Admin
-  unlockAdmin: (code: string) => boolean;
+  unlockAdmin: (code: string) => Promise<boolean>;
   lockAdmin: () => void;
   // Markets & Trading
   placeBet: (marketId: string, side: Outcome, amount: number) => Promise<{ success: boolean; message: string }>;
@@ -315,8 +390,9 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  const unlockAdmin = (code: string): boolean => {
-    if (code.trim() === ADMIN_CODE) {
+  const unlockAdmin = async (code: string): Promise<boolean> => {
+    const isValid = await verifyAdminPasscode(code);
+    if (isValid) {
       setIsAdmin(true);
       showToast('Admin controls unlocked.', 'success');
       return true;
@@ -364,19 +440,24 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return { success: false, message: 'This market is closed.' };
     }
 
+    const fee = Math.max(amount >= 10 ? 1 : 0, Math.floor(amount * PLATFORM_FEE_RATE));
+    const netStake = amount - fee;
+
     const existingPosition = market.positions[currentUser.uid];
     if (existingPosition && existingPosition.side !== side && existingPosition.stake > 0) {
       showToast(`You already hold a ${existingPosition.side} position. Only one side per market is permitted.`, 'error');
       return { success: false, message: 'You can only bet on one side per market.' };
     }
 
-    const newStake = (existingPosition?.stake || 0) + amount;
+    const newStake = (existingPosition?.stake || 0) + netStake;
     const updatedPosition = {
       uid: currentUser.uid,
       username: currentUser.username,
       email: currentUser.email,
       side,
       stake: newStake,
+      grossStake: (existingPosition?.grossStake || 0) + amount,
+      feePaid: (existingPosition?.feePaid || 0) + fee,
       timestamp: new Date().toISOString()
     };
 
@@ -391,16 +472,20 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     }));
 
-    setMarkets(prev => ({
-      ...prev,
-      [marketId]: {
-        ...prev[marketId],
-        positions: {
-          ...prev[marketId].positions,
-          [currentUser.uid]: updatedPosition
+    setMarkets(prev => {
+      const cur = prev[marketId];
+      return {
+        ...prev,
+        [marketId]: {
+          ...cur,
+          totalFeesCollected: (cur.totalFeesCollected || 0) + fee,
+          positions: {
+            ...cur.positions,
+            [currentUser.uid]: updatedPosition
+          }
         }
-      }
-    }));
+      };
+    });
 
     // Sync to Firebase if connected
     if (isFirebaseInitialized && db) {
@@ -444,13 +529,14 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     closesAt: string;
     adminCode?: string;
   }): Promise<{ success: boolean; message: string; marketId?: string }> => {
-    // Require admin code (123457) or active admin session
+    // Require admin session or valid hashed admin passcode
     const providedCode = params.adminCode?.trim();
-    if (!isAdmin && providedCode !== ADMIN_CODE) {
-      showToast('Admin code (123457) is required to create a market.', 'error');
-      return { success: false, message: 'Admin code (123457) is required to create a market.' };
+    const isCodeValid = providedCode ? await verifyAdminPasscode(providedCode) : false;
+    if (!isAdmin && !isCodeValid) {
+      showToast('Valid admin passcode is required to create a market.', 'error');
+      return { success: false, message: 'Valid admin passcode is required to create a market.' };
     }
-    if (providedCode === ADMIN_CODE && !isAdmin) {
+    if (isCodeValid && !isAdmin) {
       setIsAdmin(true);
     }
 
@@ -526,23 +612,39 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const updatedUsers = { ...users };
     const firebasePayoutUpdates: Record<string, any> = {};
 
-    Object.entries(positions).forEach(([uid, pos]) => {
-      if (pos.side === outcome) {
-        winnersCount++;
-        const stake = Number(pos.stake || 0);
-        const payout = Math.floor(stake * 1.1); // 10% bonus returned
-        totalPayout += payout;
+    const winningPositions = Object.entries(positions).filter(([_, p]) => p.side === outcome);
+    const losingPositions = Object.entries(positions).filter(([_, p]) => p.side !== outcome);
 
-        if (updatedUsers[uid]) {
-          updatedUsers[uid] = {
-            ...updatedUsers[uid],
-            balance: updatedUsers[uid].balance + payout
-          };
-          firebasePayoutUpdates[`users/${uid}/balance`] = updatedUsers[uid].balance;
-        }
-        if (currentUser && currentUser.uid === uid) {
-          currentUserWon = true;
-        }
+    const winningPool = winningPositions.reduce((sum, [_, p]) => sum + Number(p.stake || 0), 0);
+    const losingPool = losingPositions.reduce((sum, [_, p]) => sum + Number(p.stake || 0), 0);
+
+    // Platform fee spread (2% fee on the opposing pool, so 50/50 pays 49/49 profit)
+    const protocolFeeFromLosingPool = Math.floor(losingPool * PLATFORM_FEE_RATE);
+    const netProfitPool = losingPool - protocolFeeFromLosingPool;
+
+    winningPositions.forEach(([uid, pos]) => {
+      winnersCount++;
+      const stake = Number(pos.stake || 0);
+
+      // Proportionate payout:
+      // Winner gets their stake + share of net losing pool
+      // When winningPool == losingPool (50/50), profit share is: stake * (losingPool * 0.98) / winningPool = stake * 0.98 = 49 on 50!
+      const userProfit = (winningPool > 0 && losingPool > 0)
+        ? Math.floor((stake / winningPool) * netProfitPool)
+        : Math.max(1, Math.floor(stake * 0.98)); // 50/50 base rate if uncontested
+
+      const payout = stake + userProfit;
+      totalPayout += payout;
+
+      if (updatedUsers[uid]) {
+        updatedUsers[uid] = {
+          ...updatedUsers[uid],
+          balance: updatedUsers[uid].balance + payout
+        };
+        firebasePayoutUpdates[`users/${uid}/balance`] = updatedUsers[uid].balance;
+      }
+      if (currentUser && currentUser.uid === uid) {
+        currentUserWon = true;
       }
     });
 

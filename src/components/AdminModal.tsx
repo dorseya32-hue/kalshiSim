@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useMarket, ADMIN_CODE } from '../context/MarketContext';
+import { useMarket } from '../context/MarketContext';
 import { MarketCategory, Outcome } from '../types/market';
 import { 
   ShieldCheck, 
@@ -65,9 +65,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleUnlock = (e: React.FormEvent) => {
+  const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
-    unlockAdmin(passcode);
+    await unlockAdmin(passcode);
     setPasscode('');
   };
 
@@ -83,8 +83,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       question: newQuestion,
       description: newDescription,
       category: newCategory,
-      closesAt: newClosesAt,
-      adminCode: ADMIN_CODE
+      closesAt: newClosesAt
     });
     if (res.success) {
       setNewQuestion('');
@@ -162,7 +161,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               <div>
                 <h3 className="text-lg font-bold text-slate-100">Enter Admin Passcode</h3>
                 <p className="text-xs text-slate-400 mt-1">
-                  Default developer code is <strong className="text-emerald-400 font-mono">123457</strong>
+                  Authorized administrator access only. Enter passcode to proceed.
                 </p>
               </div>
 
@@ -171,7 +170,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   type="password"
                   value={passcode}
                   onChange={e => setPasscode(e.target.value)}
-                  placeholder="Enter passcode (123457)"
+                  placeholder="Enter admin passcode"
                   className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-center text-sm font-mono tracking-widest text-slate-100 focus:outline-none focus:border-emerald-500"
                   autoFocus
                 />
@@ -287,7 +286,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       {/* Beneficiaries Preview */}
                       <div className="pt-3 border-t border-slate-800">
                         <span className="text-xs font-semibold text-slate-300 block mb-2">
-                          Resolution Outcome & Payout Calculator (10% Bonus Rule)
+                          Resolution Outcome & Payout Calculator (2% Protocol Spread - 50/50 pays 49/49)
                         </span>
 
                         <div className="grid grid-cols-2 gap-3 mb-4">
@@ -321,24 +320,46 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             Simulated Payout for Outcome = <strong>{selectedOutcome}</strong>:
                           </p>
                           {(() => {
-                            const winners = Object.values(selectedResolveMarket.positions || {}).filter(
-                              p => p.side === selectedOutcome
-                            );
+                            const positions = Object.values(selectedResolveMarket.positions || {});
+                            const winners = positions.filter(p => p.side === selectedOutcome);
+                            const losers = positions.filter(p => p.side !== selectedOutcome);
+
                             if (winners.length === 0) {
                               return <p className="text-slate-500 italic">No bettors on {selectedOutcome}. No payout will be distributed.</p>;
                             }
-                            const total = winners.reduce((sum, w) => sum + Math.floor(w.stake * 1.1), 0);
+                            const winPool = winners.reduce((sum, w) => sum + Number(w.stake || 0), 0);
+                            const losePool = losers.reduce((sum, l) => sum + Number(l.stake || 0), 0);
+                            const protocolFee = Math.floor(losePool * 0.02);
+                            const netProfitPool = losePool - protocolFee;
+
+                            const payouts = winners.map(w => {
+                              const profit = (winPool > 0 && losePool > 0)
+                                ? Math.floor((w.stake / winPool) * netProfitPool)
+                                : Math.max(1, Math.floor(w.stake * 0.98));
+                              return {
+                                ...w,
+                                profit,
+                                total: w.stake + profit
+                              };
+                            });
+
+                            const totalDistributed = payouts.reduce((sum, p) => sum + p.total, 0);
+
                             return (
                               <div className="space-y-1">
-                                {winners.map(w => (
+                                {payouts.map(w => (
                                   <div key={w.uid} className="flex justify-between text-slate-300">
-                                    <span>{w.username} ({w.stake} staked)</span>
-                                    <span className="text-emerald-400 font-bold">+{Math.floor(w.stake * 1.1)} cr payout</span>
+                                    <span>{w.username} ({w.stake} cr staked)</span>
+                                    <span className="text-emerald-400 font-bold">+{w.total} cr ({w.profit} cr profit)</span>
                                   </div>
                                 ))}
                                 <div className="pt-2 border-t border-slate-800 flex justify-between font-bold text-slate-200">
+                                  <span>Protocol Fee Retained (2%):</span>
+                                  <span className="text-slate-400 font-mono">{protocolFee} credits</span>
+                                </div>
+                                <div className="flex justify-between font-bold text-slate-200">
                                   <span>Total Distributed Winnings:</span>
-                                  <span className="text-emerald-400">{total} credits</span>
+                                  <span className="text-emerald-400 font-mono">{totalDistributed} credits</span>
                                 </div>
                               </div>
                             );

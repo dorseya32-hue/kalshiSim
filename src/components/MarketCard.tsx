@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Market, Outcome } from '../types/market';
-import { useMarket } from '../context/MarketContext';
+import { useMarket, calculateEstimatedPayout } from '../context/MarketContext';
 import { 
   Clock, 
   Users, 
@@ -165,7 +165,7 @@ export const MarketCard: React.FC<MarketCardProps> = ({ market, onOpenDetail }) 
               {userPosition.side === market.outcome ? (
                 <>
                   <CheckCircle className="w-3.5 h-3.5" />
-                  Won {Math.floor(userPosition.stake * 1.1)} cr!
+                  Winner! Payout credited
                 </>
               ) : (
                 'Resolved'
@@ -243,6 +243,10 @@ export const MarketCard: React.FC<MarketCardProps> = ({ market, onOpenDetail }) 
               >
                 Bet NO
               </button>
+            </div>
+            <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono">
+              <span>2% fee spread applied</span>
+              <span>50/50 odds pays 49 on 50</span>
             </div>
           </div>
         ) : (

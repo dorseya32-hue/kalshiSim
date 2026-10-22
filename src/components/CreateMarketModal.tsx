@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useMarket, ADMIN_CODE } from '../context/MarketContext';
+import { useMarket } from '../context/MarketContext';
 import { MarketCategory } from '../types/market';
 import { X, PlusCircle, Lock, ShieldCheck } from 'lucide-react';
 
@@ -71,7 +71,7 @@ export const CreateMarketModal: React.FC<CreateMarketModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {/* Admin Passcode Gate (Required: 123457) */}
+          {/* Admin Passcode Gate */}
           {isAdmin ? (
             <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/30 rounded-lg flex items-center justify-between text-xs text-emerald-300">
               <span className="flex items-center gap-1.5 font-semibold">
@@ -85,15 +85,15 @@ export const CreateMarketModal: React.FC<CreateMarketModalProps> = ({
               <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
                 <span className="flex items-center gap-1.5 text-amber-300">
                   <Lock className="w-3.5 h-3.5 text-amber-400" />
-                  Admin Passcode * (Required: 123457)
+                  Admin Passcode *
                 </span>
-                <span className="text-[10px] text-slate-500 font-mono">Code: 123457</span>
+                <span className="text-[10px] text-slate-500">Authorized personnel only</span>
               </label>
               <input
                 type="password"
                 value={adminCodeInput}
                 onChange={e => setAdminCodeInput(e.target.value)}
-                placeholder="Enter admin code (123457)"
+                placeholder="Enter admin passcode to publish"
                 className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-slate-100 focus:outline-none focus:border-emerald-500 placeholder:text-slate-600"
                 required
               />

@@ -10,6 +10,8 @@ export interface MarketPosition {
   email: string;
   side: Outcome;
   stake: number;
+  grossStake?: number;
+  feePaid?: number;
   timestamp: string;
 }
 
@@ -36,6 +38,7 @@ export interface Market {
   createdByName: string;
   positions: Record<string, MarketPosition>; // uid -> position
   comments?: MarketComment[];
+  totalFeesCollected?: number;
 }
 
 export interface UserProfile {

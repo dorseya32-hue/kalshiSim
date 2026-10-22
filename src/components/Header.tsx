@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useMarket, ADMIN_CODE } from '../context/MarketContext';
+import { useMarket } from '../context/MarketContext';
 import { 
   TrendingUp, 
   Wallet, 
@@ -99,7 +99,7 @@ export const Header: React.FC<HeaderProps> = ({
             ) : (
               <span className="flex items-center gap-1 text-slate-400 hover:text-slate-200">
                 <Lock className="w-3.5 h-3.5" />
-                Admin ({ADMIN_CODE})
+                Admin
               </span>
             )}
           </button>
