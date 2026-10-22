@@ -1,0 +1,6 @@
+{
+  "name": "Play Market - Prediction Market",
+  "description": "A real-time play-money prediction market platform. Trade YES/NO contracts, manage positions, create markets, and resolve outcomes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
